@@ -10,6 +10,8 @@ pub struct CourseDetails {
     pub total_enrolled: u256,
     pub course_type: ResourceType,
     pub enroll_fee: u256,
+    pub updated_at: u64,
+    pub created_at: u64,
 }
 
 #[derive(Drop, Serde, starknet::Store, Clone)]
