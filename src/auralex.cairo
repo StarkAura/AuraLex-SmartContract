@@ -1,7 +1,9 @@
 #[starknet::contract]
 pub mod Auralex {
+    use auralex_contracts::base::events::{PaymentProcessed, StudentEnrolled};
     use auralex_contracts::base::types::{CourseDetails, ResourceType};
     use auralex_contracts::interfaces::IAuralex::IAuralex;
+    use auralex_contracts::interfaces::IErc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
@@ -15,6 +17,21 @@ pub mod Auralex {
         next_course_id: u256,
         // Course enrollments: course_id -> (student_address -> bool)
         course_enrollments: Map<(u256, ContractAddress), bool>,
+        // Payment token address
+        payment_token: ContractAddress,
+    }
+
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    enum Event {
+        StudentEnrolled: StudentEnrolled,
+        PaymentProcessed: PaymentProcessed,
+    }
+
+    #[constructor]
+    fn constructor(ref self: ContractState, payment_token_address: ContractAddress) {
+        self.payment_token.write(payment_token_address);
+        self.next_course_id.write(0);
     }
 
 
@@ -61,49 +78,79 @@ pub mod Auralex {
         }
 
         fn enroll_for_course(ref self: ContractState, course_id: u256, fee: u256) {
-            // Get the caller address
             let caller = get_caller_address();
+            let current_timestamp = get_block_timestamp();
 
-            // Check if course_id is within valid range
+            // Check if course exists
             let next_id = self.next_course_id.read();
             assert(course_id > 0 && course_id <= next_id, 'Course does not exist');
 
-            // Retrieve the course details
             let mut course = self.courses.read(course_id);
-
-            // Validate that the course exists (course_id should be > 0)
             assert(course.course_id != 0, 'Course does not exist');
 
-            // Check if student is already enrolled
+            // Check if already enrolled
             let is_enrolled = self.course_enrollments.read((course_id, caller));
             assert(!is_enrolled, 'Already enrolled in course');
 
-            // Validate fee for the course type
+            // Handle payment
             if course.course_type == ResourceType::Free {
                 assert(fee == 0, 'Free course requires no fee');
-                assert(course.enroll_fee == 0, 'Course fee mismatch');
             } else {
-                // For paid courses, validate the fee matches
                 assert(fee == course.enroll_fee, 'Incorrect enrollment fee');
                 assert(fee > 0, 'Paid course requires fee');
-                // In a real implementation, you would:
-            // 1. Transfer tokens from caller to contract/instructor using ERC20
-            // 2. Handle the actual payment logic here
-            // For now, we just validate the fee amount
+
+                // Transfer ERC20 tokens
+                let payment_token_address = self.payment_token.read();
+                let token_dispatcher = IERC20Dispatcher { contract_address: payment_token_address };
+
+                let caller_balance = token_dispatcher.balance_of(caller);
+                assert(caller_balance.into() >= fee.into(), 'Insufficient token balance');
+
+                let allowance: u256 = token_dispatcher
+                    .allowance(caller, starknet::get_contract_address())
+                    .into();
+                assert(allowance >= fee, 'Insufficient token allowance');
+
+                let fee_felt: felt252 = fee.try_into().unwrap();
+                token_dispatcher.transfer_from(caller, course.instructor, fee_felt);
+
+                // Emit payment processed event with all required fields
+                self
+                    .emit(
+                        PaymentProcessed {
+                            course_id,
+                            from: caller,
+                            to: course.instructor,
+                            amount: fee,
+                            token_address: payment_token_address,
+                        },
+                    );
             }
 
-            // Mark student as enrolled
+            // Enroll student
             self.course_enrollments.write((course_id, caller), true);
-
-            // Increment the total enrolled count
             course.total_enrolled += 1;
-            course.updated_at = get_block_timestamp();
-
-            // Update the course in storage
+            course.updated_at = current_timestamp;
             self.courses.write(course_id, course);
+
+            // Emit student enrolled event with all required fields
+            self
+                .emit(
+                    StudentEnrolled {
+                        course_id, student: caller, fee_paid: fee, enrolled_at: current_timestamp,
+                    },
+                );
         }
         fn is_enrolled(self: @ContractState, course_id: u256, student: ContractAddress) -> bool {
             self.course_enrollments.read((course_id, student))
+        }
+
+        fn get_payment_token(self: @ContractState) -> ContractAddress {
+            self.payment_token.read()
+        }
+
+        fn set_payment_token(ref self: ContractState, new_token_address: ContractAddress) {
+            self.payment_token.write(new_token_address);
         }
     }
 }
