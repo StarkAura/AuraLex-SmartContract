@@ -1,7 +1,7 @@
 #[starknet::contract]
 pub mod Auralex {
     use auralex_contracts::base::events::{PaymentProcessed, StudentEnrolled};
-    use auralex_contracts::base::types::{CourseDetails, ResourceType};
+    use auralex_contracts::base::types::{CourseDetails, ResourceType, Certificate};
     use auralex_contracts::interfaces::IAuralex::IAuralex;
     use auralex_contracts::interfaces::IErc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
@@ -19,13 +19,28 @@ pub mod Auralex {
         course_enrollments: Map<(u256, ContractAddress), bool>,
         // Payment token address
         payment_token: ContractAddress,
+        // Certificate NFT management
+        certificates: Map<u256, Certificate>,
+        next_certificate_id: u256,
+        student_certificates: Map<(ContractAddress, u256), u256>, // student address -> course_id -> certificate_id
     }
+
+  
 
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
         StudentEnrolled: StudentEnrolled,
         PaymentProcessed: PaymentProcessed,
+        CertificateIssued: CertificateIssued,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct CertificateIssued {
+        certificate_id: u256,
+        course_id: u256,
+        student: ContractAddress,
+        issued_at: u64,
     }
 
     #[constructor]
@@ -151,6 +166,62 @@ pub mod Auralex {
 
         fn set_payment_token(ref self: ContractState, new_token_address: ContractAddress) {
             self.payment_token.write(new_token_address);
+        }
+
+        fn issue_certificate(
+            ref self: ContractState,
+            course_id: u256,
+            student: ContractAddress,
+            metadata_uri: ByteArray
+        ) -> u256 {
+            let caller = get_caller_address();
+            let course = self.courses.read(course_id);
+            
+            // Verify caller is course instructor
+            assert(caller == course.instructor, 'Only instructor can issue');
+            
+            // Verify student is enrolled
+            assert(self.is_enrolled(course_id, student), 'Student not enrolled');
+            
+            // Check if certificate already issued
+            let existing_cert = self.student_certificates.read((student, course_id));
+            assert(existing_cert == 0, 'Certificate already issued');
+
+            // Generate new certificate ID
+            let certificate_id = self.next_certificate_id.read() + 1;
+            self.next_certificate_id.write(certificate_id);
+
+            let timestamp = get_block_timestamp();
+
+            // Create certificate
+            let certificate = Certificate {
+                id: certificate_id,
+                course_id,
+                student,
+                issued_at: timestamp,
+                metadata_uri,
+            };
+
+            // Store certificate
+            self.certificates.write(certificate_id, certificate);
+            self.student_certificates.write((student, course_id), certificate_id);
+
+            // Emit event
+            self.emit(CertificateIssued {
+                certificate_id,
+                course_id,
+                student,
+                issued_at: timestamp
+            });
+
+            certificate_id
+        }
+
+        fn get_certificate(
+            self: @ContractState,
+            certificate_id: u256
+        ) -> Certificate {
+            self.certificates.read(certificate_id)
         }
     }
 }
