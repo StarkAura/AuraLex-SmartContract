@@ -1,5 +1,5 @@
 use starknet::ContractAddress;
-use crate::base::types::{CourseDetails, Certificate};
+use crate::base::types::{Certificate, CourseDetails};
 
 #[starknet::interface]
 pub trait IAuralex<TContractState> {
@@ -15,15 +15,12 @@ pub trait IAuralex<TContractState> {
     fn get_payment_token(self: @TContractState) -> ContractAddress;
     fn set_payment_token(ref self: TContractState, new_token_address: ContractAddress);
     fn issue_certificate(
-            ref self: TContractState,
-            course_id: u256,
-            student: ContractAddress,
-            metadata_uri: ByteArray
-        ) -> u256;
-    fn get_certificate(
-            self: @TContractState,
-            certificate_id: u256
-        ) -> Certificate;
+        ref self: TContractState,
+        course_id: u256,
+        student: ContractAddress,
+        metadata_uri: ByteArray,
+    ) -> u256;
+    fn get_certificate(self: @TContractState, certificate_id: u256) -> Certificate;
     // fn mint_course_certificate(ref self: TContractState, course_id: u256);
 // fn verify_course_credential(self: @TContractState, course_id: u256, student:
 // ContractAddress);

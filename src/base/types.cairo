@@ -24,14 +24,14 @@ pub struct CertificateDetails {
     pub enroll_fee: u256,
 }
 
-  #[derive(Drop, Serde, starknet::Store)]
-   pub struct Certificate {
-        pub id: u256,
-        pub course_id: u256,
-        pub student: ContractAddress,
-        pub issued_at: u64,
-        pub metadata_uri: ByteArray,
-    }
+#[derive(Drop, Serde, starknet::Store)]
+pub struct Certificate {
+    pub id: u256,
+    pub course_id: u256,
+    pub student: ContractAddress,
+    pub issued_at: u64,
+    pub metadata_uri: ByteArray,
+}
 
 #[derive(Debug, Drop, Serde, starknet::Store, Clone, PartialEq)]
 pub enum ResourceType {

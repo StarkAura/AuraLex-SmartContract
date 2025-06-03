@@ -1,7 +1,7 @@
 #[starknet::contract]
 pub mod Auralex {
     use auralex_contracts::base::events::{PaymentProcessed, StudentEnrolled};
-    use auralex_contracts::base::types::{CourseDetails, ResourceType, Certificate};
+    use auralex_contracts::base::types::{Certificate, CourseDetails, ResourceType};
     use auralex_contracts::interfaces::IAuralex::IAuralex;
     use auralex_contracts::interfaces::IErc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
@@ -22,10 +22,11 @@ pub mod Auralex {
         // Certificate NFT management
         certificates: Map<u256, Certificate>,
         next_certificate_id: u256,
-        student_certificates: Map<(ContractAddress, u256), u256>, // student address -> course_id -> certificate_id
+        student_certificates: Map<
+            (ContractAddress, u256), u256,
+        > // student address -> course_id -> certificate_id
     }
 
-  
 
     #[event]
     #[derive(Drop, starknet::Event)]
@@ -172,17 +173,17 @@ pub mod Auralex {
             ref self: ContractState,
             course_id: u256,
             student: ContractAddress,
-            metadata_uri: ByteArray
+            metadata_uri: ByteArray,
         ) -> u256 {
             let caller = get_caller_address();
             let course = self.courses.read(course_id);
-            
+
             // Verify caller is course instructor
             assert(caller == course.instructor, 'Only instructor can issue');
-            
+
             // Verify student is enrolled
             assert(self.is_enrolled(course_id, student), 'Student not enrolled');
-            
+
             // Check if certificate already issued
             let existing_cert = self.student_certificates.read((student, course_id));
             assert(existing_cert == 0, 'Certificate already issued');
@@ -195,11 +196,7 @@ pub mod Auralex {
 
             // Create certificate
             let certificate = Certificate {
-                id: certificate_id,
-                course_id,
-                student,
-                issued_at: timestamp,
-                metadata_uri,
+                id: certificate_id, course_id, student, issued_at: timestamp, metadata_uri,
             };
 
             // Store certificate
@@ -207,20 +204,15 @@ pub mod Auralex {
             self.student_certificates.write((student, course_id), certificate_id);
 
             // Emit event
-            self.emit(CertificateIssued {
-                certificate_id,
-                course_id,
-                student,
-                issued_at: timestamp
-            });
+            self
+                .emit(
+                    CertificateIssued { certificate_id, course_id, student, issued_at: timestamp },
+                );
 
             certificate_id
         }
 
-        fn get_certificate(
-            self: @ContractState,
-            certificate_id: u256
-        ) -> Certificate {
+        fn get_certificate(self: @ContractState, certificate_id: u256) -> Certificate {
             self.certificates.read(certificate_id)
         }
     }
