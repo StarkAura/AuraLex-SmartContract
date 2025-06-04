@@ -24,7 +24,8 @@ pub mod Auralex {
         next_certificate_id: u256,
         student_certificates: Map<
             (ContractAddress, u256), u256,
-        > // student address -> course_id -> certificate_id
+        >, // student address -> course_id -> certificate_id
+        course_completion: Map<(u256, ContractAddress), bool>,
     }
 
 
@@ -214,6 +215,67 @@ pub mod Auralex {
 
         fn get_certificate(self: @ContractState, certificate_id: u256) -> Certificate {
             self.certificates.read(certificate_id)
+        }
+
+        /// Marks a course as completed for a student and automatically mints a certificate
+        fn mint_certificate_on_completion(
+            ref self: ContractState,
+            course_id: u256,
+            student: ContractAddress,
+            metadata_uri: ByteArray,
+        ) -> u256 {
+            let caller = get_caller_address();
+
+            // Verify course exists first
+            let next_id = self.next_course_id.read();
+            assert(course_id > 0 && course_id <= next_id, 'Course does not exist');
+
+            let course = self.courses.read(course_id);
+            assert(course.course_id != 0, 'Course does not exist');
+
+            // Verify caller is course instructor
+            assert(caller == course.instructor, 'Not instructor');
+
+            // Verify student is enrolled
+            assert(self.is_enrolled(course_id, student), 'Student not enrolled');
+
+            // Check if already completed
+            let is_completed = self.course_completion.read((course_id, student));
+            assert(!is_completed, 'Course already completed');
+
+            // Check if certificate already issued
+            let existing_cert = self.student_certificates.read((student, course_id));
+            assert(existing_cert == 0, 'Certificate already issued');
+
+            // Mark course as completed
+            self.course_completion.write((course_id, student), true);
+
+            // Issue certificate
+            let certificate_id = self.next_certificate_id.read() + 1;
+            self.next_certificate_id.write(certificate_id);
+
+            let timestamp = get_block_timestamp();
+            let certificate = Certificate {
+                id: certificate_id, course_id, student, issued_at: timestamp, metadata_uri,
+            };
+
+            // Store certificate
+            self.certificates.write(certificate_id, certificate);
+            self.student_certificates.write((student, course_id), certificate_id);
+
+            // Emit event
+            self
+                .emit(
+                    CertificateIssued { certificate_id, course_id, student, issued_at: timestamp },
+                );
+
+            certificate_id
+        }
+        /// Checks if a student has completed a course
+        fn is_course_completed(
+            self: @ContractState, course_id: u256, student: ContractAddress,
+        ) -> bool {
+            self.course_completion.read((course_id, student))
         }
     }
 }

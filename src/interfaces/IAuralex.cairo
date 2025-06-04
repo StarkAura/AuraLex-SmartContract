@@ -21,6 +21,15 @@ pub trait IAuralex<TContractState> {
         metadata_uri: ByteArray,
     ) -> u256;
     fn get_certificate(self: @TContractState, certificate_id: u256) -> Certificate;
+    fn mint_certificate_on_completion(
+        ref self: TContractState,
+        course_id: u256,
+        student: ContractAddress,
+        metadata_uri: ByteArray,
+    ) -> u256;
+    fn is_course_completed(
+        self: @TContractState, course_id: u256, student: ContractAddress,
+    ) -> bool;
     // fn mint_course_certificate(ref self: TContractState, course_id: u256);
 // fn verify_course_credential(self: @TContractState, course_id: u256, student:
 // ContractAddress);
