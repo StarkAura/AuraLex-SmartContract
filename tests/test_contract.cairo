@@ -1,4 +1,4 @@
-use auralex_contracts::base::types::{CourseDetails, ResourceType};
+use auralex_contracts::base::types::{Certificate, CourseDetails, ResourceType};
 use auralex_contracts::interfaces::IAuralex::{IAuralexDispatcher, IAuralexDispatcherTrait};
 use snforge_std::{CheatSpan, ContractClassTrait, DeclareResultTrait, cheat_caller_address, declare};
 use starknet::{ContractAddress, contract_address_const};
@@ -11,9 +11,9 @@ fn setup() -> ContractAddress {
     let contract_class = declare_result.unwrap().contract_class();
     let mut calldata = array![];
 
-     // Use a dummy token address - we'll only test free courses
-     let dummy_token_address: ContractAddress = contract_address_const::<'dummy_token'>();
-     calldata.append(dummy_token_address.into());
+    // Use a dummy token address - we'll only test free courses
+    let dummy_token_address: ContractAddress = contract_address_const::<'dummy_token'>();
+    calldata.append(dummy_token_address.into());
 
     let deploy_result = contract_class.deploy(@calldata);
     assert(deploy_result.is_ok(), 'Contract deployment failed');
@@ -106,7 +106,7 @@ fn test_enroll_for_free_course() {
     // Verify enrollment
     let updated_course = dispatcher.get_course(course_id);
     assert(updated_course.total_enrolled == 1, 'Enrollment count should be 1');
-    
+
     // Verify student is enrolled
     assert(dispatcher.is_enrolled(course_id, student), 'Student should be enrolled');
 }
@@ -140,7 +140,7 @@ fn test_multiple_students_free_course() {
     // Verify all enrollments
     let updated_course = dispatcher.get_course(course_id);
     assert(updated_course.total_enrolled == 3, 'Should have 3 enrolled students');
-    
+
     assert(dispatcher.is_enrolled(course_id, student1), 'Student1 should be enrolled');
     assert(dispatcher.is_enrolled(course_id, student2), 'Student2 should be enrolled');
     assert(dispatcher.is_enrolled(course_id, student3), 'Student3 should be enrolled');
@@ -228,7 +228,7 @@ fn test_multiple_free_courses() {
 
     let course1 = dispatcher.get_course(course_id1);
     let course2 = dispatcher.get_course(course_id2);
-    
+
     assert(course1.total_enrolled == 1, 'Course 1 should have 1 student');
     assert(course2.total_enrolled == 1, 'Course 2 should have 1 student');
 }
@@ -240,7 +240,7 @@ fn test_get_payment_token() {
 
     let dummy_token_address: ContractAddress = contract_address_const::<'dummy_token'>();
     let retrieved_token = dispatcher.get_payment_token();
-    
+
     assert(retrieved_token == dummy_token_address, 'Payment token address mismatch');
 }
 
@@ -250,11 +250,281 @@ fn test_set_payment_token() {
     let dispatcher = IAuralexDispatcher { contract_address };
 
     let new_token_address: ContractAddress = contract_address_const::<'new_token'>();
-    
+
     // Set new payment token
     dispatcher.set_payment_token(new_token_address);
-    
+
     // Verify it was set
     let retrieved_token = dispatcher.get_payment_token();
     assert(retrieved_token == new_token_address, 'New payment token not set');
+}
+
+#[test]
+fn test_issue_certificate() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTest";
+
+    // Create course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Issue certificate
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let certificate_id = dispatcher.issue_certificate(course_id, student, metadata_uri);
+
+    // Verify certificate details
+    let certificate = dispatcher.get_certificate(certificate_id);
+    assert(certificate.id == certificate_id, 'Invalid certificate id');
+    assert(certificate.course_id == course_id, 'Invalid course id');
+    assert(certificate.student == student, 'Invalid student');
+}
+
+#[test]
+#[should_panic(expected: ('Only instructor can issue',))]
+fn test_issue_certificate_unauthorized() {
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let unauthorized = contract_address_const::<'unauthorized'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTest";
+
+    // Create course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Try to issue certificate as unauthorized user
+    cheat_caller_address(contract_address, unauthorized, CheatSpan::Indefinite);
+    dispatcher.issue_certificate(course_id, student, metadata_uri);
+}
+
+#[test]
+#[should_panic(expected: ('Student not enrolled',))]
+fn test_issue_certificate_not_enrolled() {
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTest";
+
+    // Create course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Try to issue certificate without enrollment
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.issue_certificate(course_id, student, metadata_uri);
+}
+
+#[test]
+fn test_mint_certificate_on_completion_success() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Instructor marks completion and mints certificate
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let certificate_id = dispatcher
+        .mint_certificate_on_completion(course_id, student, metadata_uri.clone());
+
+    // Verify certificate details
+    let certificate = dispatcher.get_certificate(certificate_id);
+    assert(certificate.id == certificate_id, 'Invalid certificate id');
+    assert(certificate.course_id == course_id, 'Invalid course id');
+    assert(certificate.student == student, 'Invalid student');
+    assert(certificate.metadata_uri == metadata_uri, 'Invalid metadata URI');
+
+    // Verify completion status
+    let is_completed = dispatcher.is_course_completed(course_id, student);
+    assert(is_completed, 'Course  completed');
+}
+
+#[test]
+#[should_panic(expected: ('Not instructor',))]
+fn test_mint_certificate_unauthorized() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let unauthorized = contract_address_const::<'unauthorized'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Unauthorized user tries to mint certificate
+    cheat_caller_address(contract_address, unauthorized, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri);
+}
+
+#[test]
+#[should_panic(expected: ('Course does not exist',))]
+fn test_mint_certificate_nonexistent_course() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Try to mint certificate for non-existent course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(999, student, metadata_uri);
+}
+
+#[test]
+#[should_panic(expected: ('Student not enrolled',))]
+fn test_mint_certificate_not_enrolled() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Try to mint certificate without enrollment
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri);
+}
+
+#[test]
+#[should_panic(expected: ('Course already completed',))]
+fn test_mint_certificate_already_completed() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Mint certificate first time
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri.clone());
+
+    // Try to mint certificate again for the same course and student
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri);
+}
+
+#[test]
+#[should_panic(expected: ('Certificate already issued',))]
+fn test_mint_certificate_already_issued() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Issue certificate manually first
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.issue_certificate(course_id, student, metadata_uri.clone());
+
+    // Try to mint certificate on completion
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri);
+}
+
+#[test]
+fn test_is_course_completed() {
+    // Deploy contract
+    let contract_address = setup();
+    let dispatcher = IAuralexDispatcher { contract_address };
+
+    // Setup test data
+    let instructor = contract_address_const::<'instructor'>();
+    let student = contract_address_const::<'student'>();
+    let course_name = "Test Course";
+    let metadata_uri = "ipfs://QmTestCert";
+
+    // Create a free course
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    let course_id = dispatcher.create_course(course_name, instructor, 0);
+
+    // Enroll student
+    cheat_caller_address(contract_address, student, CheatSpan::Indefinite);
+    dispatcher.enroll_for_course(course_id, 0);
+
+    // Check completion status before minting
+    let is_completed_before = dispatcher.is_course_completed(course_id, student);
+    assert(!is_completed_before, 'Course  not be completed yet');
+
+    // Mint certificate on completion
+    cheat_caller_address(contract_address, instructor, CheatSpan::Indefinite);
+    dispatcher.mint_certificate_on_completion(course_id, student, metadata_uri);
+
+    // Check completion status after minting
+    let is_completed_after = dispatcher.is_course_completed(course_id, student);
+    assert(is_completed_after, 'Course marked completed');
 }
